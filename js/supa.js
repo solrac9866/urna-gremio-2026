@@ -14,13 +14,19 @@ function esc(s) {
   return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
+// Permite entrar so com o usuario (ex.: escolarosa); o e-mail interno completa o dominio.
+function usuarioParaEmail(v) {
+  v = v.trim().toLowerCase();
+  return v.includes('@') ? v : v + '@urna.rosa';
+}
+
 function montarLogin(el, onOk) {
   el.hidden = false;
   el.innerHTML = `
     <form class="card login" id="formLogin">
       <h1>${esc(ESCOLA)}</h1>
       <p class="muted">${esc(ELEICAO)} &middot; acesso do professor</p>
-      <label>E-mail <input type="email" id="lgEmail" autocomplete="username" required></label>
+      <label>Usuário <input type="text" id="lgEmail" autocomplete="username" autocapitalize="none" required></label>
       <label>Senha <input type="password" id="lgSenha" autocomplete="current-password" required></label>
       <p class="erro" id="lgErro" hidden></p>
       <button class="btn verde" type="submit">Entrar</button>
@@ -30,7 +36,7 @@ function montarLogin(el, onOk) {
     e.preventDefault();
     erro.hidden = true;
     const { error } = await db.auth.signInWithPassword({
-      email: el.querySelector('#lgEmail').value.trim(),
+      email: usuarioParaEmail(el.querySelector('#lgEmail').value),
       password: el.querySelector('#lgSenha').value,
     });
     if (error) { erro.textContent = 'E-mail ou senha incorretos.'; erro.hidden = false; return; }
