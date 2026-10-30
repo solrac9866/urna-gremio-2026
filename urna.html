@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Urna Eletrônica - Grêmio 2026</title>
+<link rel="stylesheet" href="css/style.css">
+<link rel="stylesheet" href="css/urna.css">
+</head>
+<body>
+<div class="overlay" id="inicio">
+  <h1>URNA ELETRÔNICA</h1>
+  <p>EE PEI Rosa Maria de Souza &middot; Grêmio Estudantil 2026</p>
+  <p><b>Toque na tela para iniciar</b></p>
+</div>
+
+<main class="urna">
+  <section class="tela">
+    <div class="offline" id="offline" hidden>SEM CONEXÃO COM A INTERNET &mdash; CHAME O MESÁRIO</div>
+    <div class="escola">EE PEI ROSA MARIA DE SOUZA</div>
+
+    <div class="centro" id="vAguardando">
+      <div class="grande" id="aguardTitulo">AGUARDE</div>
+      <div class="medio" id="aguardTexto">Aguardando liberação do mesário</div>
+    </div>
+
+    <div class="voto" id="vVoto" hidden>
+      <small>SEU VOTO PARA</small>
+      <h2>GRÊMIO ESTUDANTIL 2026</h2>
+      <div class="linha-num" id="linhaNum"><span>Chapa:</span><div class="digitos" id="digitos"></div></div>
+      <div class="dados" id="dados"></div>
+      <div class="aviso" id="aviso"></div>
+      <div class="rodape">
+        Aperte a tecla:<br>
+        <b>VERDE</b> para CONFIRMAR este voto<br>
+        <b>LARANJA</b> para REINICIAR este voto
+      </div>
+    </div>
+
+    <div class="centro" id="vFim" hidden>
+      <div class="grande" style="font-size:clamp(60px,18vmin,220px)">FIM</div>
+      <div class="medio">VOTOU</div>
+    </div>
+  </section>
+
+  <section class="teclado">
+    <div class="marca">URNA ELETRÔNICA</div>
+    <div class="teclas" id="teclas"></div>
+    <div class="fnc">
+      <button class="tecla branco" id="kBranco">BRANCO</button>
+      <button class="tecla corrige" id="kCorrige">CORRIGE</button>
+      <button class="tecla confirma" id="kConfirma">CONFIRMA</button>
+    </div>
+  </section>
+</main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supa.js"></script>
+<script src="js/sons.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let chapas = [], nDig = 2, modo = 'bloqueada', num = '', branco = false, enviando = false;
+
+// teclado numerico 1..9, 0
+const teclas = $('teclas');
+[1, 2, 3, 4, 5, 6, 7, 8, 9, 0].forEach(n => {
+  const b = document.createElement('button');
+  b.className = 'tecla' + (n === 0 ? ' zero' : '');
+  b.textContent = n;
+  b.onclick = () => digitar(String(n));
+  teclas.appendChild(b);
+});
+$('kBranco').onclick = votoBranco;
+$('kCorrige').onclick = corrige;
+$('kConfirma').onclick = confirma;
+document.addEventListener('keydown', e => {
+  if (/^\d$/.test(e.key)) digitar(e.key);
+  else if (e.key === 'Backspace' || e.key === 'Escape') corrige();
+  else if (e.key === 'Enter') confirma();
+});
+
+$('inicio').onclick = () => {
+  Sons.init();
+  $('inicio').hidden = true;
+  const el = document.documentElement;
+  if (el.requestFullscreen) el.requestFullscreen().catch(() => {});
+  ciclo();
+};
+
+async function carregarChapas() {
+  const { data, error } = await db.from('chapas').select('*').order('numero');
+  if (error) throw new Error(error.message);
+  chapas = data;
+  nDig = Math.max(1, ...chapas.map(c => String(c.numero).length));
+}
+
+function setModo(m) {
+  modo = m;
+  $('vAguardando').hidden = m !== 'bloqueada';
+  $('vVoto').hidden = m !== 'votando';
+  $('vFim').hidden = m !== 'fim';
+}
+
+function iniciar() {
+  num = ''; branco = false; enviando = false;
+  $('aviso').textContent = '';
+  setModo('votando');
+  render();
+}
+
+function chapaAtual() {
+  return num.length === nDig ? chapas.find(c => String(c.numero) === String(parseInt(num, 10))) : null;
+}
+
+function render() {
+  const linha = $('linhaNum'), dados = $('dados'), box = $('digitos');
+  if (branco) {
+    linha.hidden = true;
+    dados.innerHTML = '<div class="txt"><div class="alerta">VOTO EM BRANCO</div></div>';
+    return;
+  }
+  linha.hidden = false;
+  box.innerHTML = '';
+  for (let i = 0; i < nDig; i++) {
+    const d = document.createElement('div');
+    d.className = 'dig' + (i === num.length ? ' vez' : '');
+    d.textContent = num[i] ?? '';
+    box.appendChild(d);
+  }
+  if (num.length < nDig) { dados.innerHTML = ''; return; }
+  const c = chapaAtual();
+  if (c) {
+    dados.innerHTML = `<div class="txt"><b>${esc(c.nome)}</b>${c.integrantes ? esc(c.integrantes) + '<br>' : ''}${c.lema ? '<em>“' + esc(c.lema) + '”</em>' : ''}</div>` +
+      (c.foto ? `<img src="${esc(c.foto)}" alt="">` : '');
+  } else {
+    dados.innerHTML = '<div class="txt"><div class="alerta nulo">CHAPA INEXISTENTE</div><div class="alerta nulo">VOTO NULO</div></div>';
+  }
+}
+
+function digitar(d) {
+  if (modo !== 'votando' || enviando) return;
+  Sons.tecla();
+  $('aviso').textContent = '';
+  if (branco) { $('aviso').textContent = 'Para votar em uma chapa, aperte CORRIGE.'; return; }
+  if (num.length < nDig) { num += d; render(); }
+}
+
+function votoBranco() {
+  if (modo !== 'votando' || enviando) return;
+  Sons.tecla();
+  if (num.length > 0) { $('aviso').textContent = 'Para votar em BRANCO, aperte CORRIGE antes.'; return; }
+  branco = true; $('aviso').textContent = ''; render();
+}
+
+function corrige() {
+  if (modo !== 'votando' || enviando) return;
+  Sons.tecla();
+  num = ''; branco = false; $('aviso').textContent = ''; render();
+}
+
+async function confirma() {
+  if (modo !== 'votando' || enviando) return;
+  if (!branco && num.length < nDig) { Sons.tecla(); $('aviso').textContent = 'Digite o número completo da chapa.'; return; }
+  enviando = true;
+  Sons.confirma();
+  const tipo = branco ? 'branco' : (chapaAtual() ? 'chapa' : 'nulo');
+  try {
+    await rpc('votar', { p_tipo: tipo, p_numero: tipo === 'chapa' ? parseInt(num, 10) : null });
+    num = ''; branco = false; enviando = false;
+    setModo('fim');
+    setTimeout(() => setModo('bloqueada'), 5000);
+  } catch (e) {
+    enviando = false;
+    if (/bloqueada/i.test(e.message)) { setModo('bloqueada'); }
+    else $('aviso').textContent = 'Não foi possível registrar o voto. Chame o mesário.';
+  }
+}
+
+async function ciclo() {
+  try {
+    const e = await rpc('estado');
+    $('offline').hidden = true;
+    if (modo === 'bloqueada') {
+      $('aguardTitulo').textContent = e.status === 'encerrada' ? 'ENCERRADA' : 'AGUARDE';
+      $('aguardTexto').textContent =
+        e.status === 'preparacao' ? 'A votação ainda não foi iniciada' :
+        e.status === 'encerrada' ? 'A votação foi encerrada' :
+        'Aguardando liberação do mesário';
+      if (e.status === 'aberta' && e.liberado) { await carregarChapas(); iniciar(); }
+    } else if (modo === 'votando' && !enviando && !e.liberado) {
+      setModo('bloqueada');
+    }
+  } catch {
+    $('offline').hidden = false;
+  }
+  setTimeout(ciclo, 1000);
+}
+</script>
+</body>
+</html>

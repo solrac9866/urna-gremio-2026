@@ -1,0 +1,7 @@
+Sons da urna (recortados do video enviado):
+
+  tecla.mp3     -> bip curto das teclas (0,4 s)
+  confirma.mp3  -> som do botao CONFIRMA (1 s, o mais longo do video)
+
+Para trocar, substitua os arquivos mantendo os mesmos nomes.
+Se algum arquivo nao existir, o site usa um som sintetizado parecido.

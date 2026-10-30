@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Mesário - Urna Grêmio 2026</title>
+<link rel="stylesheet" href="css/style.css">
+<style>
+  .painel { max-width: 640px; margin: 0 auto; padding: 16px; text-align: center; }
+  .estado { font-size: 1.15rem; margin: 18px 0; min-height: 3.2em; }
+  .botao-grande { width: 100%; padding: 8vh 10px; font-size: clamp(26px, 7vw, 48px); border-radius: 18px; }
+  .contador { font-size: 1.1rem; margin-top: 20px; }
+  .contador b { font-size: 2.2rem; display: block; }
+  .flash { font-size: 1.4rem; font-weight: 800; color: var(--verde); }
+</style>
+</head>
+<body>
+<div id="login"></div>
+<div class="painel" id="app" hidden>
+  <div class="topo">
+    <h1>Mesário</h1>
+    <span><a href="admin.html">Administração</a> &middot; <a href="#" onclick="sair();return false">Sair</a></span>
+  </div>
+  <p class="muted">EE PEI Rosa Maria de Souza &middot; Grêmio Estudantil 2026</p>
+  <span class="selo" id="selo"></span>
+  <div class="estado" id="estado"></div>
+  <button class="btn verde botao-grande" id="btnLiberar" disabled>LIBERAR URNA</button>
+  <div class="acoes" style="justify-content:center"><button class="btn cinza" id="btnCancelar" hidden>Cancelar liberação</button></div>
+  <div class="contador">Votos computados<b id="votos">0</b><span class="muted" id="libs"></span></div>
+  <p class="erro" id="erro" hidden></p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supa.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let anterior = null, flashAte = 0, ocupado = false;
+
+exigirAdmin($('login'), () => { $('app').hidden = false; ciclo(); });
+
+$('btnLiberar').onclick = () => acao('liberar');
+$('btnCancelar').onclick = () => acao('cancelar_liberacao');
+
+async function acao(fn) {
+  if (ocupado) return;
+  ocupado = true; $('btnLiberar').disabled = true;
+  try { $('erro').hidden = true; desenhar(await rpc(fn)); }
+  catch (e) { $('erro').textContent = e.message; $('erro').hidden = false; }
+  ocupado = false;
+}
+
+function desenhar(e) {
+  if (anterior && e.total_votos > anterior.total_votos) flashAte = Date.now() + 4000;
+  anterior = e;
+  const nomes = { preparacao: 'EM PREPARAÇÃO', aberta: 'VOTAÇÃO ABERTA', encerrada: 'ENCERRADA' };
+  $('selo').className = 'selo ' + e.status;
+  $('selo').textContent = nomes[e.status];
+  $('votos').textContent = e.total_votos;
+  $('libs').textContent = 'Liberações: ' + e.total_liberacoes;
+  const btn = $('btnLiberar'), est = $('estado');
+  $('btnCancelar').hidden = !(e.status === 'aberta' && e.liberado);
+  if (e.status !== 'aberta') {
+    btn.disabled = true; btn.className = 'btn cinza botao-grande'; btn.textContent = 'LIBERAR URNA';
+    est.innerHTML = e.status === 'preparacao' ? 'A votação ainda não foi aberta.<br>Abra em Administração.' : 'A votação foi encerrada.';
+  } else if (e.liberado) {
+    btn.disabled = true; btn.className = 'btn laranja botao-grande'; btn.textContent = 'URNA LIBERADA';
+    est.textContent = 'Aguardando o aluno votar…';
+  } else {
+    btn.disabled = false; btn.className = 'btn verde botao-grande'; btn.textContent = 'LIBERAR URNA';
+    est.innerHTML = Date.now() < flashAte ? '<span class="flash">✔ Voto registrado!</span><br>Pronto para o próximo aluno.' : 'Urna bloqueada. Confira o nome do aluno e libere.';
+  }
+}
+
+async function ciclo() {
+  if (!ocupado) {
+    try { desenhar(await rpc('estado')); $('erro').hidden = true; }
+    catch { $('erro').textContent = 'Sem conexão com a internet.'; $('erro').hidden = false; }
+  }
+  setTimeout(ciclo, 1200);
+}
+</script>
+</body>
+</html>

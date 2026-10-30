@@ -1,0 +1,263 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Administração - Urna Grêmio 2026</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<div id="login"></div>
+<div class="wrap" id="app" hidden>
+  <div class="topo">
+    <h1>Administração &middot; Grêmio Estudantil 2026</h1>
+    <span><a href="mesario.html">Mesário</a> &middot; <a href="#" onclick="sair();return false">Sair</a></span>
+  </div>
+  <div class="tabs">
+    <button data-aba="chapas" class="on">Chapas</button>
+    <button data-aba="votacao">Votação</button>
+    <button data-aba="relatorio">Relatório</button>
+  </div>
+
+  <section id="aba-chapas">
+    <div class="card" id="boxForm">
+      <h3 id="formTitulo">Nova chapa</h3>
+      <form id="formChapa">
+        <div class="grid2">
+          <label>Número <input type="number" id="cNumero" min="1" max="999" required></label>
+          <label>Nome da chapa <input type="text" id="cNome" maxlength="60" required></label>
+        </div>
+        <label>Integrantes <input type="text" id="cInteg" maxlength="160" placeholder="Ex.: Ana (presidente), João (vice)"></label>
+        <label>Lema <input type="text" id="cLema" maxlength="100"></label>
+        <label>Foto da chapa <input type="file" id="cFoto" accept="image/*"></label>
+        <img id="prevFoto" class="foto-mini" hidden alt="">
+        <p class="erro" id="cErro" hidden></p>
+        <div class="acoes">
+          <button class="btn verde" type="submit">Salvar chapa</button>
+          <button class="btn cinza" type="button" id="cCancelar" hidden>Cancelar edição</button>
+        </div>
+      </form>
+    </div>
+    <p class="muted" id="avisoBloq" hidden>As chapas só podem ser alteradas antes de abrir a votação.</p>
+    <div class="card" style="margin-top:14px">
+      <h3>Chapas cadastradas</h3>
+      <table><thead><tr><th>Foto</th><th>Nº</th><th>Chapa</th><th></th></tr></thead><tbody id="listaChapas"></tbody></table>
+    </div>
+  </section>
+
+  <section id="aba-votacao" hidden>
+    <div class="card">
+      <h3>Situação: <span class="selo" id="selo"></span></h3>
+      <p>Votos computados: <b id="nVotos">0</b> &middot; Liberações: <b id="nLibs">0</b></p>
+      <div class="acoes">
+        <button class="btn verde" id="bAbrir">Abrir votação</button>
+        <button class="btn vermelho" id="bEncerrar">Encerrar votação</button>
+        <button class="btn cinza" id="bZerar">Zerar tudo (testes)</button>
+      </div>
+      <p class="erro" id="vErro" hidden></p>
+      <p class="muted">Dica: faça alguns votos de teste, depois encerre, confira o relatório e use "Zerar tudo" antes da eleição de verdade. Só o resultado final é mostrado, nunca o parcial.</p>
+    </div>
+  </section>
+
+  <section id="aba-relatorio" hidden>
+    <div class="card relatorio" id="boxRel"></div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="js/config.js"></script>
+<script src="js/supa.js"></script>
+<script>
+const $ = id => document.getElementById(id);
+let estado = null, chapas = [], foto = null, editando = null, ultimoRel = null;
+
+exigirAdmin($('login'), () => { $('app').hidden = false; iniciar(); });
+
+function iniciar() {
+  document.querySelectorAll('.tabs button').forEach(b => b.onclick = () => aba(b.dataset.aba));
+  atualizar();
+  setInterval(() => { if (!$('aba-votacao').hidden) atualizarEstado(); }, 3000);
+}
+
+function aba(nome) {
+  document.querySelectorAll('.tabs button').forEach(b => b.classList.toggle('on', b.dataset.aba === nome));
+  ['chapas', 'votacao', 'relatorio'].forEach(a => $('aba-' + a).hidden = a !== nome);
+  if (nome === 'relatorio') carregarRelatorio();
+  if (nome === 'votacao') atualizarEstado();
+}
+
+async function atualizarEstado() {
+  estado = await rpc('estado');
+  const nomes = { preparacao: 'EM PREPARAÇÃO', aberta: 'VOTAÇÃO ABERTA', encerrada: 'ENCERRADA' };
+  $('selo').className = 'selo ' + estado.status;
+  $('selo').textContent = nomes[estado.status];
+  $('nVotos').textContent = estado.total_votos;
+  $('nLibs').textContent = estado.total_liberacoes;
+  $('bAbrir').disabled = estado.status !== 'preparacao';
+  $('bEncerrar').disabled = estado.status !== 'aberta';
+  $('bZerar').disabled = false;
+  const travado = estado.status !== 'preparacao';
+  $('boxForm').hidden = travado;
+  $('avisoBloq').hidden = !travado;
+  desenharChapas();
+}
+
+async function atualizar() {
+  await atualizarEstado();
+  const { data, error } = await db.from('chapas').select('*').order('numero');
+  if (!error) chapas = data;
+  desenharChapas();
+}
+
+function desenharChapas() {
+  const travado = estado && estado.status !== 'preparacao';
+  $('listaChapas').innerHTML = chapas.length ? chapas.map(c => `
+    <tr><td>${c.foto ? `<img class="foto-mini" src="${esc(c.foto)}" alt="">` : ''}</td>
+    <td><b>${c.numero}</b></td>
+    <td>${esc(c.nome)}<br><span class="muted">${esc(c.integrantes)}</span></td>
+    <td class="num">${travado ? '' : `<button class="btn cinza" onclick="editar(${c.numero})">Editar</button>
+      <button class="btn vermelho" onclick="excluir(${c.numero})">Excluir</button>`}</td></tr>`).join('')
+    : '<tr><td colspan="4" class="muted">Nenhuma chapa cadastrada ainda.</td></tr>';
+}
+
+// foto reduzida no navegador (fica pequena e cabe no banco)
+$('cFoto').onchange = async e => {
+  const f = e.target.files[0];
+  if (!f) return;
+  foto = await reduzir(f, 360);
+  $('prevFoto').src = foto; $('prevFoto').hidden = false;
+};
+function reduzir(file, lado) {
+  return new Promise(res => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = lado; c.height = Math.round(lado * 4 / 3);
+      const ctx = c.getContext('2d');
+      const r = Math.max(c.width / img.width, c.height / img.height);
+      const w = img.width * r, h = img.height * r;
+      ctx.drawImage(img, (c.width - w) / 2, (c.height - h) / 2, w, h);
+      res(c.toDataURL('image/jpeg', 0.8));
+      URL.revokeObjectURL(img.src);
+    };
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+$('formChapa').onsubmit = async e => {
+  e.preventDefault();
+  const erro = $('cErro'); erro.hidden = true;
+  const numero = parseInt($('cNumero').value, 10);
+  const outros = chapas.filter(c => c.numero !== editando);
+  if (outros.some(c => String(c.numero).length !== String(numero).length)) {
+    erro.textContent = 'Todas as chapas devem ter o mesmo número de dígitos (ex.: 11, 22, 33).';
+    erro.hidden = false; return;
+  }
+  const reg = { numero, nome: $('cNome').value.trim(), integrantes: $('cInteg').value.trim(), lema: $('cLema').value.trim() };
+  if (foto) reg.foto = foto;
+  let r;
+  if (editando !== null) r = await db.from('chapas').update(reg).eq('numero', editando);
+  else r = await db.from('chapas').insert(reg);
+  if (r.error) {
+    erro.textContent = /duplicate/i.test(r.error.message) ? 'Já existe uma chapa com esse número.' : r.error.message;
+    erro.hidden = false; return;
+  }
+  limparForm(); atualizar();
+};
+
+function limparForm() {
+  editando = null; foto = null;
+  $('formChapa').reset(); $('prevFoto').hidden = true; $('cCancelar').hidden = true;
+  $('formTitulo').textContent = 'Nova chapa'; $('cNumero').disabled = false;
+}
+$('cCancelar').onclick = limparForm;
+
+function editar(n) {
+  const c = chapas.find(x => x.numero === n);
+  editando = n; foto = null;
+  $('cNumero').value = c.numero; $('cNome').value = c.nome; $('cInteg').value = c.integrantes || ''; $('cLema').value = c.lema || '';
+  if (c.foto) { $('prevFoto').src = c.foto; $('prevFoto').hidden = false; }
+  $('formTitulo').textContent = 'Editar chapa ' + n; $('cCancelar').hidden = false;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+async function excluir(n) {
+  if (!confirm('Excluir a chapa ' + n + '?')) return;
+  const { error } = await db.from('chapas').delete().eq('numero', n);
+  if (error) alert(error.message);
+  atualizar();
+}
+
+async function comando(fn, msg) {
+  if (msg && !confirm(msg)) return;
+  $('vErro').hidden = true;
+  try { await rpc(fn); } catch (e) { $('vErro').textContent = e.message; $('vErro').hidden = false; }
+  atualizar();
+}
+$('bAbrir').onclick = () => comando('abrir_votacao', 'Abrir a votação? Depois disso não será possível alterar as chapas.');
+$('bEncerrar').onclick = () => comando('encerrar_votacao', 'Encerrar a votação? Depois disso ninguém mais poderá votar.');
+$('bZerar').onclick = () => {
+  if (prompt('Isto APAGA todos os votos e volta para a preparação.\nDigite ZERAR para confirmar:') === 'ZERAR') comando('zerar_votacao');
+};
+
+// ---------- relatorio ----------
+const fmt = d => d ? new Date(d).toLocaleString('pt-BR') : '-';
+
+async function sha(txt) {
+  const b = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(txt));
+  return [...new Uint8Array(b)].map(x => x.toString(16).padStart(2, '0')).join('');
+}
+
+async function carregarRelatorio() {
+  const box = $('boxRel');
+  let r;
+  try { r = await rpc('resultado'); }
+  catch (e) { box.innerHTML = '<p class="muted">O relatório fica disponível somente depois de encerrar a votação.</p>'; return; }
+  ultimoRel = r;
+  const total = r.votos_contados;
+  const pct = v => total ? (v * 100 / total).toFixed(1).replace('.', ',') + '%' : '-';
+  const ordenadas = [...r.chapas].sort((a, b) => b.votos - a.votos);
+  const topo = ordenadas[0];
+  const empate = ordenadas.length > 1 && ordenadas[0].votos === ordenadas[1].votos;
+  const confere = r.votos_contados === r.total_votos && r.total_votos === r.total_liberacoes;
+  const hash = await sha(JSON.stringify(r));
+  box.innerHTML = `
+    <div class="cab">
+      <h2>BOLETIM DE URNA</h2>
+      <b>${esc(ESCOLA)}</b><br>Eleição do ${esc(ELEICAO)}<br>
+      <span class="muted">Abertura: ${fmt(r.aberta_em)} &middot; Encerramento: ${fmt(r.encerrada_em)}</span>
+    </div>
+    <table>
+      <thead><tr><th>Nº</th><th>Chapa</th><th class="num">Votos</th><th class="num">%</th></tr></thead>
+      <tbody>
+        ${r.chapas.map(c => `<tr><td>${c.numero}</td><td>${esc(c.nome)}</td><td class="num">${c.votos}</td><td class="num">${pct(c.votos)}</td></tr>`).join('')}
+        <tr><td></td><td>Votos em branco</td><td class="num">${r.brancos}</td><td class="num">${pct(r.brancos)}</td></tr>
+        <tr><td></td><td>Votos nulos</td><td class="num">${r.nulos}</td><td class="num">${pct(r.nulos)}</td></tr>
+        <tr><th></th><th>TOTAL DE VOTOS</th><th class="num">${total}</th><th class="num">100%</th></tr>
+      </tbody>
+    </table>
+    <p><b>Resultado:</b> ${total === 0 ? 'nenhum voto registrado.' : empate ? 'EMPATE entre as chapas mais votadas.' : `chapa ${topo.numero} &ndash; ${esc(topo.nome)} (${topo.votos} votos).`}</p>
+    <p class="${confere ? 'ok' : 'erro'}">Conferência: ${r.total_liberacoes} liberações &middot; ${r.total_votos} votos computados &middot; ${r.votos_contados} votos contados &mdash; ${confere ? 'OK, os números batem.' : 'ATENÇÃO: números divergentes!'}</p>
+    <p class="muted" style="word-break:break-all;font-size:.75rem">Código de verificação (SHA-256): ${hash}</p>
+    <div class="assinaturas"><div>Professor responsável</div><div>Testemunha 1</div><div>Testemunha 2</div></div>
+    <div class="acoes nao-imprimir">
+      <button class="btn" onclick="window.print()">Imprimir / salvar PDF</button>
+      <button class="btn cinza" onclick="baixarCSV()">Baixar CSV</button>
+    </div>`;
+}
+
+function baixarCSV() {
+  const r = ultimoRel;
+  const linhas = [['Numero', 'Chapa', 'Votos']];
+  r.chapas.forEach(c => linhas.push([c.numero, c.nome, c.votos]));
+  linhas.push(['', 'Brancos', r.brancos], ['', 'Nulos', r.nulos], ['', 'Total', r.votos_contados],
+    ['', 'Liberacoes', r.total_liberacoes], ['', 'Abertura', fmt(r.aberta_em)], ['', 'Encerramento', fmt(r.encerrada_em)]);
+  const csv = '﻿' + linhas.map(l => l.map(v => '"' + String(v).replace(/"/g, '""') + '"').join(';')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = 'resultado-gremio-2026.csv';
+  a.click();
+}
+</script>
+</body>
+</html>
